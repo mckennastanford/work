@@ -1,6 +1,0 @@
-Scripts from Israel Silber used for processing and generating the combined sounding-radar dataset, which includes plenty of useful fields.
-
-An example sounding-radar file for the McMurdo Station dataset (AWARE) is available at the following path:/Users/mckennastanford/work/israel_data/ and is named awrM1_full_cld_analysis_radar_sounding_v3.nc.
-
-Scripts were originally written in Matlab and are being converted to Python by McKenna Stanford.
-
