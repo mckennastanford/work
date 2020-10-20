@@ -1,6 +1,6 @@
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 # Original creator: Israel Silber
-# Converted from Matlab to Python by McKenna Stanford (MS)
+# Converted from Matlab to Python by McKenna Stanford
 # Obtained by MS on 09-02-2020
 # Last update: 10-15-2020
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
