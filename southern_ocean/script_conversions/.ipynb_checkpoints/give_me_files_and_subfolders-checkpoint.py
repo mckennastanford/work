@@ -184,7 +184,7 @@ def give_me_files_and_subfolders(Search_String,Path,**kwargs):
     if len(tmp_list_dir) > 0.:
         for ii in range(len(tmp_list_dir)):
             New_Path = tmp_list_dir[ii]+'/'
-            give_me_files_and_subfolders(search_string,New_Path,\
+            give_me_files_and_subfolders(Search_String,New_Path,\
                                          flist_struct_input=flist_struct)
             
                     

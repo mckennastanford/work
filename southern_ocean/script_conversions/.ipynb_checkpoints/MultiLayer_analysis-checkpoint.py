@@ -1,70 +1,280 @@
-clear all
-%% Load long-term data.
-Site = 0; % 0 - nsa, 1 - awr.
-if Site == 0
-    STR = 'nsaC1';
-    Site_name = 'North Slope, Alaska';
-    Site_loc = [71.32 -156.61];
-    Search_string = ['nsa*b1*.cdf'];
-    Sonde_path = '/bear/s1/data/nsa/hsrl.wisconsin/sonde/'; % ARM file directory
-    Site_alt = 7; % for Barrow.
-elseif Site == 1
-    STR = 'awrM1';
-    Site_name = 'McMurdo Station, Antarctica';
-    Site_loc = [-77.85 166.65];
-    Search_string = ['awr*b1*.cdf'];
-    Sonde_path = '/bear/s2/data/AWARE/SONDE/'; % ARM file directory
-    Site_alt = 70; % for McM.
-end
-Res_2_use = 15; % in m
-Max_cloud_height = 10e3; % highest altitude to analyze in this study.
-[Flist_struct] = give_me_files_and_subfolders(Search_string, Sonde_path );
-Alt = (0:Res_2_use:Max_cloud_height)'+ Site_alt;
-Num_layers = length(Alt);
-Num_profiles = length(Flist_struct);
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Multilayer_analysis.py
+# Original creator: Israel Silber
+# Converted from Matlab to Python by McKenna Stanford
+# Obtained by MS on 09-02-2020
+# Last update: 10-21-2020
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Sonde.release_t = NaN(1, Num_profiles);
-Sonde.vert_res_mean = NaN(1, Num_profiles);
-Sonde.asc_mean = NaN(1, Num_profiles);
-Sonde.time = NaN(Num_layers, Num_profiles);
-Sonde.lat = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.lon = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.p = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.T = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.q = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.RH = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.RH_i = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.theta = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.theta_e = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.u = single(ones(Num_layers, Num_profiles).* -9999);
-Sonde.v = single(ones(Num_layers, Num_profiles).* -9999);
-for ii = Num_profiles: -1: 1
-    if mod(Num_profiles - ii, 100) == 0;    disp(['Profile ', num2str(Num_profiles - ii + 1), ' out of ', num2str(Num_profiles), ' (', num2str((Num_profiles - ii)/Num_profiles*100, '%.2f'), '% done!)']);     end
-    Sondetmp = load_sonde_data(Flist_struct(ii));
-    % Try two types of field names for the ascent rate
-    try        Sondetmp.asc_mean = ncread([Flist_struct(ii).path Flist_struct(ii).name], 'asc');        catch;      end
-    try        Sondetmp.asc_mean = ncread([Flist_struct(ii).path Flist_struct(ii).name], 'wcmp');       catch;      end
-    [~, Unique_loc] = unique(Sondetmp.alt); % unique sounding values.
-    if length(Unique_loc) > 1
-        Sonde.release_t(ii) = Sondetmp.time(1);
-        Sonde.vert_res_mean(ii) = nanmean(diff(Sondetmp.alt(Unique_loc)));
-        try        Sonde.asc_mean(ii) = nanmean(Sondetmp.asc_mean(Unique_loc));        catch;      warning('likely no asc data'); end
-        Sonde.time(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.time(Unique_loc), Alt);
-        Sonde.lat(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.lat(Unique_loc), Alt);
-        Sonde.lon(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.lon(Unique_loc), Alt);
-        Sonde.p(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.pressure(Unique_loc), Alt);
-        Sonde.T(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.drybulb_temp(Unique_loc), Alt);
-        Sonde.RH(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.RH(Unique_loc), Alt);
-        Moretmp = calculate_theta_and_more(Sonde.T(:, ii), Sonde.p(:, ii), Sonde.RH(:, ii));
-        Sonde.q(:, ii) = Moretmp.q;
-        Sonde.RH_i(:, ii) = Moretmp.RH_i;
-        Sonde.theta(:, ii) = Moretmp.Theta;
-        Sonde.theta_e(:, ii) = Moretmp.Theta_e;
-        Sonde.u(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.u_wind(Unique_loc), Alt);
-        Sonde.v(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.v_wind(Unique_loc), Alt);
-    end
-    clear Sondetmp Moretmp
-end
+#============================================
+# Python Imports
+#============================================
+from give_me_files_and_subfolders import give_me_files_and_subfolders
+import numpy as np
+from load_sonde_data import load_sonde_data
+import datetime
+from calculate_theta_and_more import calculate_theta_and_more
+
+import calendar
+#--------------------------------------------
+# Quick functions for some datetime object conversions
+#--------------------------------------------
+def toTimestamp(d):
+    return calendar.timegm(d.timetuple())
+
+def toDatetime(d):
+    return datetime.datetime.utcfromtimestamp(d)
+#============================================
+#============================================
+
+#-----------------------------
+# Load data
+#-----------------------------
+STR = ''
+Site_name = 'Macquarie Island'
+Site_loc = (-54.49,158.93) # taken from Sounding file
+Search_string = '201605'
+Sonde_path = '/Volumes/STANFORD_1/micre_soundings/' # personal thumb drive
+Site_alt = 3.66 # taken from ARM Ceilometer and MWR files
+# -- lowest altitude in soundings is 5.9 m, not sure if this is elevation or not
+
+Res_2_use = 25 # in m -- NOTE: Need to determine appropriate resolution by 
+# -- checking resolution of soundings, radar, and lidar
+# -- the radar will probably be the limiting factor, which has a resolution of
+# -- 25 m in the merged sensitivity mode dataset. Could just use the 25 m
+# -- resolution dataset only and sacrifice 6 dB of sensitivity.
+
+Max_cloud_height = 10.e3 # highest altitude to analyze in this study
+# -- Probably want to be more explicit here, but 10 km is fine for now
+# -- Likely choice should be highest altitude the sonde reaches within
+# -- 30 minutes of release, averaged over the campaign
+Flist_struct = give_me_files_and_subfolders(Search_string,Sonde_path)
+Alt = np.arange(0,Max_cloud_height+Res_2_use,Res_2_use) + Site_alt
+Num_layers = len(Alt)
+Num_profiles = len(Flist_struct)
+
+#------------------------------------------------
+# Make Sonde dictionary
+#------------------------------------------------
+keys_1 = ['vert_res_mean','asc_mean']
+keys_2 = ['lat','lon',\
+       'p','T','q','RH','RH_i','theta','theta_e','u','v']
+keys_3 = ['release_t','time']
+
+Sonde = {}
+
+for key in keys_1:
+    Sonde[key] = np.zeros(Num_profiles)
+    
+for key in keys_2:
+    Sonde[key] = np.zeros([Num_layers,Num_profiles])
+
+#for key in keys_3:
+Sonde['release_t'] = np.empty(Num_profiles,dtype=datetime.datetime)
+Sonde['time'] = np.empty([Num_layers,Num_profiles],dtype=datetime.datetime)
+    
+for key,val in Sonde.items():
+    print(key,np.shape(val),type(val))
+    
+    
+#=======================================================
+# Loop through number of profiles (soundings), interpolate
+# to common (defined) grid, and write to dictionary
+# named "Sonde". This will also include calculated
+# thermodynamic values from the "calculate_theta_and_more"
+# function.
+#=======================================================
+for ii in range(Num_profiles):
+    #periodic progress update (modulo 10) printed to screen
+    if (ii+1)%10 == 0:
+        print('Profile '+str(ii+1)+' out of '+str(Num_profiles)+' ('+str((ii+1)/Num_profiles*100.)+' % done!)')
+        
+    # load in sonde file
+    Sondetmp = load_sonde_data(Flist_struct[ii])
+
+    # check for unique values in altitude, basically to eliminate
+    # times when altitude remained consant, such as at the beginning
+    # of the release.
+    # -- NOTE: the AAD files appear to be quality controlled very well
+    # and perhaps duplicate altitudes were removed in the QC process
+    unique_vals,unique_ids = np.unique(Sondetmp['alt'],return_index=True)
+    
+    if len(unique_vals) > 0:
+        Sonde['release_t'][ii] = Sondetmp['time'][0] 
+        Sonde['vert_res_mean'][ii] = np.nanmean(np.diff(Sondetmp['alt'][unique_ids])) # in km
+        Sonde['asc_mean'][ii] = np.nanmean(Sondetmp['ascent_rate'][unique_ids]) # in m/s
+        
+        Sonde['lat'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                       Sondetmp['lat'][unique_ids]) # in m
+        Sonde['lon'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                       Sondetmp['lon'][unique_ids]) # in m
+        Sonde['p'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                     Sondetmp['pressure'][unique_ids]) # in hPa
+        Sonde['T'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                     Sondetmp['drybulb_temp'][unique_ids]) # in K
+        Sonde['RH'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                     Sondetmp['RH'][unique_ids]) # in %
+        Sonde['u'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                     Sondetmp['u_wind'][unique_ids]) # in m/s
+        Sonde['v'][:,ii] = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,\
+                                     Sondetmp['v_wind'][unique_ids]) # in m/s
+        
+        # Time interpolation requires to convert to a timestamp (giving an integer or float),
+        # interpolating, and then converting back to a datetime object.
+        tmp_time = [toTimestamp(Sondetmp['time'][dd]) for dd in range(len(Sondetmp['time']))]
+        tmp_time_interp = np.interp(Alt,Sondetmp['alt'][unique_ids]*1.e3,tmp_time[unique_ids])
+        time_interp_datetime = [toDatetime(tmp_time_interp[dd]) for dd in range(len(tmp_time_interp))]
+        Sonde['time'][:,ii] = time_interp_datetime
+        
+        # Get additional thermodynamic calculations
+        # from "calculate_theta_and_more" function
+        Moretmp = calculate_theta_and_more(Sonde['T'][:,ii],Sonde['p'][:,ii],\
+                                           RH=Sonde['RH'][:,ii],use_T_K=True)
+        
+        Sonde['q'][:,ii] = Moretmp['q']
+        Sonde['RH_i'][:,ii] = Moretmp['RH_i']
+        Sonde['theta'][:,ii] = Moretmp['Theta']
+        Sonde['theta_e'][:,ii] = Moretmp['Theta_e']
+
+        
+        #-------------------------------
+        # Plot to check interpolation
+        #-------------------------------
+        if False:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            #ax2 = ax.twinx()
+            #ax.plot(Sondetmp['alt'],Sondetmp['lat'],c='r',lw=3,label='native lat')
+            #ax.plot(Sondetmp['alt'],Sondetmp['pressure'],c='r',lw=3,label='native')
+            #ax.plot(Sondetmp['alt'],tmp_time,c='r',lw=3,label='native')
+            #ax.plot(Sondetmp['alt'],Sondetmp['time'],c='r',lw=3,label='native')
+            #ax.plot(Sondetmp['alt'],Sondetmp['u_wind'],c='r',lw=3,label='native')
+            ax.plot(Sondetmp['alt'],Sondetmp['v_wind'],c='r',lw=3,label='native')
+            #ax.plot(Sondetmp['alt'],Sondetmp['drybulb_temp'],c='r',lw=3,label='native')
+            #ax.plot(Sondetmp['alt'],Sondetmp['RH'],c='r',lw=3,label='native')
+            
+            #ax.plot(Alt/1.e3,Sonde['lat'][:,ii],c='k',lw=5,ls='dotted',label='interp lat')
+            #ax.plot(Alt/1.e3,Sonde['p'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            #ax.plot(Alt/1.e3,tmp_time_interp,c='k',lw=5,ls='dotted',label='interp')
+            #ax.plot(Alt/1.e3,Sonde['T'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            #ax.plot(Alt/1.e3,Sonde['RH'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            #ax.plot(Alt/1.e3,Sonde['time'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            #ax.plot(Alt/1.e3,Sonde['u'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            ax.plot(Alt/1.e3,Sonde['v'][:,ii],c='k',lw=5,ls='dotted',label='interp')
+            
+            #ax2.plot(Sondetmp['alt'],Sondetmp['lon'],c='b',lw=3,label='native lon')
+            #ax2.plot(Alt/1.e3,Sonde['lon'][:,ii],c='darkorange',lw=5,ls='dotted',label='interp lon')
+            
+            #ax.set_ylabel('Latitude')
+            #ax.set_ylabel('Pressure [hPa]')
+            #ax.set_ylabel('Time Stamp')
+            #ax.set_ylabel('Time in Datetime Format')
+            #ax.set_ylabel('u [m s$^{-1}$]')
+            ax.set_ylabel('v [m s$^{-1}$]')
+            #ax.set_ylabel('Temperature [K]')
+            #ax.set_ylabel('Relative Humidity [%]')
+            #ax2.set_ylabel('Longitude')
+            ax.set_xlabel('Altitude [km]')
+            ax.set_xlim(0,12)
+            ax.legend(loc='best')
+            #ax2.legend(bbox_to_anchor=(0.3,0.35))
+            plt.show()
+            
+    # Clear containers that are no longer needed
+    del Moretmp,Sondetmp
+    
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# TESTING
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+#for file in Flist_struct:
+#    print(file.fname)
+#import matplotlib.pyplot as plt
+#plt.plot(Alt)
+
+
+
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!! END TRANSCRIPTION !!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+#clear all
+#%% Load long-term data.
+#Site = 0; % 0 - nsa, 1 - awr.
+#if Site == 0
+#    STR = 'nsaC1';
+#    Site_name = 'North Slope, Alaska';
+#    Site_loc = [71.32 -156.61];
+#    Search_string = ['nsa*b1*.cdf'];
+#    Sonde_path = '/bear/s1/data/nsa/hsrl.wisconsin/sonde/'; % ARM file directory
+#    Site_alt = 7; % for Barrow.
+#elseif Site == 1
+#    STR = 'awrM1';
+#    Site_name = 'McMurdo Station, Antarctica';
+#    Site_loc = [-77.85 166.65];
+#    Search_string = ['awr*b1*.cdf'];
+#    Sonde_path = '/bear/s2/data/AWARE/SONDE/'; % ARM file directory
+#    Site_alt = 70; % for McM.
+#end
+#Res_2_use = 15; % in m
+#Max_cloud_height = 10e3; % highest altitude to analyze in this study.
+#[Flist_struct] = give_me_files_and_subfolders(Search_string, Sonde_path );
+#Alt = (0:Res_2_use:Max_cloud_height)'+ Site_alt;
+#Num_layers = length(Alt);
+#Num_profiles = length(Flist_struct);
+
+#Sonde.release_t = NaN(1, Num_profiles);
+#Sonde.vert_res_mean = NaN(1, Num_profiles);
+#Sonde.asc_mean = NaN(1, Num_profiles);
+#Sonde.time = NaN(Num_layers, Num_profiles);
+#Sonde.lat = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.lon = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.p = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.T = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.q = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.RH = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.RH_i = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.theta = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.theta_e = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.u = single(ones(Num_layers, Num_profiles).* -9999);
+#Sonde.v = single(ones(Num_layers, Num_profiles).* -9999);
+#for ii = Num_profiles: -1: 1
+#    if mod(Num_profiles - ii, 100) == 0;    disp(['Profile ', num2str(Num_profiles - ii + 1), ' out of ', num2str(Num_profiles), ' (', num2str((Num_profiles - ii)/Num_profiles*100, '%.2f'), '% done!)']);     end
+#    Sondetmp = load_sonde_data(Flist_struct(ii));
+#    % Try two types of field names for the ascent rate
+#     try        Sondetmp.asc_mean = ncread([Flist_struct(ii).path Flist_struct(ii).name], 'asc');        catch;      end
+#     try        Sondetmp.asc_mean = ncread([Flist_struct(ii).path Flist_struct(ii).name], 'wcmp');       catch;      end
+#     [~, Unique_loc] = unique(Sondetmp.alt); % unique sounding values.
+#     if length(Unique_loc) > 1
+#         Sonde.release_t(ii) = Sondetmp.time(1);
+#         Sonde.vert_res_mean(ii) = nanmean(diff(Sondetmp.alt(Unique_loc)));
+#         try        Sonde.asc_mean(ii) = nanmean(Sondetmp.asc_mean(Unique_loc));        catch;      warning('likely no asc data'); end
+#         Sonde.time(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.time(Unique_loc), Alt);
+#         Sonde.lat(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.lat(Unique_loc), Alt);
+#         Sonde.lon(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.lon(Unique_loc), Alt);
+#         Sonde.p(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.pressure(Unique_loc), Alt);
+#         Sonde.T(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.drybulb_temp(Unique_loc), Alt);
+#         Sonde.RH(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.RH(Unique_loc), Alt);
+#         Moretmp = calculate_theta_and_more(Sonde.T(:, ii), Sonde.p(:, ii), Sonde.RH(:, ii));
+#         Sonde.q(:, ii) = Moretmp.q;
+#         Sonde.RH_i(:, ii) = Moretmp.RH_i;
+#         Sonde.theta(:, ii) = Moretmp.Theta;
+#         Sonde.theta_e(:, ii) = Moretmp.Theta_e;
+#         Sonde.u(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.u_wind(Unique_loc), Alt);
+#         Sonde.v(:, ii) = interp1(Sondetmp.alt(Unique_loc), Sondetmp.v_wind(Unique_loc), Alt);
+#     end
+#     clear Sondetmp Moretmp
+# end
+
+
 % no data or data only outside the examined range.
 Valid_locs = find(~(isnan(Sonde.release_t) | sum(~isnan(Sonde.T)) == 0));
 Sonde.time = Sonde.time(:, Valid_locs);
